@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -26,8 +27,24 @@ public partial class MainFile : Node
     // Enable only when explicity testing autonomous combat actions
     private const bool AutoPlayTestEnabled = false;
 
-    // Prevent the test from submitting more than one card per combat
-    private static bool _autoPlayTestSubmitted;
+    // Enables execution of decisions received from Python.
+    // Keep false until single-action safeguards are done
+    private const bool PythonControlEnabled = false;
+
+    // Number of cards automatically submitted in this combat.
+    // Temporarily limited to two for testing sequential decisions.
+    private static int _autoPlayTestCount;
+
+    // Prevent agent from submitting another action
+    // while previous one is being processed
+    // this prevent batch processing
+    private static bool _agentActionPending;
+
+    // Prevent multiple post-action observation tasks from running concurrently.
+    private static bool _observationTaskPending;
+
+    // The action submitted by our agent, retain until execution completes.
+    private static CombatLegalAction? _pendingAgentAction;
 
     public static MegaCrit.Sts2.Core.Logging.Logger Logger { get; } = new(ModId, MegaCrit.Sts2.Core.Logging.LogType.Generic);
 
@@ -49,6 +66,17 @@ public partial class MainFile : Node
     // Tracks whether the CombatWon fired for this encounter.
     // Prevents CombatEnded from treating victories as defeats
     private static bool _combatWasWon;
+
+    // Next python decision
+    private static long _nextDecisionId = 0;
+
+    // Stop outdated decision
+    private static long _latestDecisionId = 0;
+
+    private static bool _pythonRequestPending = false;
+
+    // Limit Python to one submitted action during initial testing
+    private static int _pythonActionsSubmitted = 0;
 
     //------------------------------------------------------------
     // Mod Initialization
@@ -93,7 +121,14 @@ public partial class MainFile : Node
         _awaitingNextTurn = false;
         _lastTransition = null;
         _combatWasWon = false;
-        _autoPlayTestSubmitted = false;
+        CombatExperienceBuffer.Clear();
+        _autoPlayTestCount = 0;
+        _agentActionPending = false;
+        _pendingAgentAction = null;
+        _observationTaskPending = false;
+        // Python invalidation reset
+        _latestDecisionId = -1;
+        _pythonActionsSubmitted = 0;
 
         // Subscribe to this run's ActionExecutor, which processes GameActions
         // Remove the handler first to prevent duplicate subscribes
@@ -148,6 +183,20 @@ public partial class MainFile : Node
                     _currentCombatState.Players[0]
                     );
 
+            // Match a single completed card against the agent's
+            // Submitted decision to preserve the original hand index
+            int? agentHandIndex = null;
+            bool isAgentAction = false;
+
+            if (_batchCardActions.Count == 1 &&
+                    _pendingAgentAction?.Type == "PlayCard" &&
+                    _batchCardActions[0].CardModelId.Entry == _pendingAgentAction.CardId &&
+                    _batchCardActions[0].TargetId == _pendingAgentAction.TargetId)
+            {
+                agentHandIndex = _pendingAgentAction.HandIndex;
+                isAgentAction = true;
+            }
+
             _lastTransition = new CombatTransition
             {
                 Before = _lastObservation,
@@ -155,13 +204,22 @@ public partial class MainFile : Node
                 Terminal = true,
                 Outcome = "Win",
                 EndedTurn = _awaitingNextTurn,
+                IsAgentAction = isAgentAction,
                 Actions = _batchCardActions.Select(card => new CombatActionObservation
                         {
                         Type = "PlayCard",
                         CardId = card.CardModelId.Entry,
-                        TargetId = card.TargetId
+                        TargetId = card.TargetId,
+                        HandIndex = agentHandIndex
                         }).ToList()
             };
+
+            CombatExperienceBuffer.Add(_lastTransition);
+
+            Logger.Info(
+                    $"TERMINAL EXPERIENCE COLLECTED: Win, " +
+                    $"Total {CombatExperienceBuffer.Count}"
+                    );
 
             if (_awaitingNextTurn)
             {
@@ -215,6 +273,9 @@ public partial class MainFile : Node
                     After = observation,
                     Terminal = true,
                     Outcome = "Loss",
+                    IsAgentAction = _awaitingNextTurn &&
+                        _pendingAgentAction?.Type == "EndTurn" &&
+                        _batchCardActions.Count == 0,
                     EndedTurn = _awaitingNextTurn,
                     Actions = _batchCardActions.Select(card => new CombatActionObservation
                             {
@@ -223,6 +284,12 @@ public partial class MainFile : Node
                             TargetId = card.TargetId
                             }).ToList()
                 };
+                CombatExperienceBuffer.Add(_lastTransition);
+
+                Logger.Info(
+                        $"TERMINAL EXPERIENCE COLLECTED: Loss, " +
+                        $"Total {CombatExperienceBuffer.Count}"
+                        );
 
                 if (_awaitingNextTurn)
                 {
@@ -243,6 +310,36 @@ public partial class MainFile : Node
                 _awaitingNextTurn = false;
             }
         }
+
+        // Persist collected transitions when combat finishes
+        // This runs after both victories and defeats.
+        if (CombatExperienceBuffer.Count > 0)
+        {
+            string directory = Path.Combine(
+                    OS.GetUserDataDir(),
+                    "RegentRL",
+                    "experiences"
+                    );
+
+            Directory.CreateDirectory(directory);
+
+            string filename = $"combat_{System.Guid.NewGuid():N}.json";
+            string path = Path.Combine(directory, filename);
+
+            CombatExperienceBuffer.SaveToFile(path);
+
+            Logger.Info(
+                    $"EXPERIENCE SAVED: {CombatExperienceBuffer.Count} " +
+                    $"transitions to {path}"  
+                    );
+        }
+
+        // Combat has ended, so no agent action should remain pending
+        //  This also handles EndTurn decisions that resulted in defeat
+        _pendingAgentAction = null;
+        _agentActionPending = false;
+        // Invalidate any python response still in flight
+        _latestDecisionId = -1;
     }
 
     private static void OnTurnStarted(CombatState state)
@@ -347,9 +444,45 @@ public partial class MainFile : Node
                     $"Energy {_lastObservation.Player.Energy} -> {observation.Player.Energy}, " +
                     $"Stars {_lastObservation.Player.Stars} -> {observation.Player.Stars}"
                     );
+
+            _lastTransition = new CombatTransition
+            {
+                Before = _lastObservation,
+                After = observation,
+                EndedTurn = true,
+                Terminal = false,
+                IsAgentAction = _pendingAgentAction?.Type == "EndTurn",
+                Actions = new List<CombatActionObservation>
+                {
+                    new CombatActionObservation
+                    {
+                        Type = "EndTurn"
+                    }
+                }
+            };
+
+            CombatExperienceBuffer.Add(_lastTransition);
+
+            Logger.Info(
+                    $"EXPERIENCE COLLECTED: " +
+                    $"Total {CombatExperienceBuffer.Count}"
+                    );
+
+            Logger.Info(
+                    $"STRUCTURED END TURN TRANSITION CREATED: " +
+                    $"Turn {_lastTransition.Before.Turn} -> {_lastTransition.After.Turn}, " +
+                    $"Actions {_lastTransition.Actions.Count}"
+                    );
         }
 
         _awaitingNextTurn = false;
+        // The previous EndTurn decision has reached the next
+        // player-turn observation, so the agent can act again.
+        if (_pendingAgentAction?.Type == "EndTurn")
+        {
+            _pendingAgentAction = null;
+            _agentActionPending = false;
+        }
         // The new snapshot becomes the baseline for subsequent card transitions
         _lastObservation = observation;
 
@@ -425,6 +558,22 @@ public partial class MainFile : Node
             }
         }
 
+        // Generate the actions available to the RL agent.
+        var legalActions = CombatLegalActionGenerator.Generate(observation);
+
+        RequestPythonDecision(observation);
+
+        Logger.Info($"LEGAL ACTIONS: {legalActions.Count}");
+
+        foreach (var action in legalActions)
+        {
+            Logger.Info(
+                    $"LEGAL ACTION: Type {action.Type}, " +
+                    $"HandIndex {action.HandIndex?.ToString() ?? "None"}, " +
+                    $"Card {action.CardId}, " +
+                    $"Target {action.TargetId?.ToString() ?? "None"}"    
+                    );
+        }
         // Verify cards extracted into RegentRl's observation
         Logger.Info($"Observed hand count: {observation.Hand.Count}");
         foreach (var card in observation.Hand)
@@ -445,29 +594,62 @@ public partial class MainFile : Node
             }
         }
 
-        if (AutoPlayTestEnabled && !_autoPlayTestSubmitted)
-        {
-            var defend = combat.Hand.Cards.FirstOrDefault(card =>
-                    card.Id.Entry == "DEFEND_REGENT" &&
-                    card.CanPlay() &&
-                    card.CanPlayTargeting(null)
-                    );
-
-            if (defend != null)
-            {
-                _autoPlayTestSubmitted = true;
-
-                Logger.Info("AUTO-PLAY TEST: Submitting DEFEND_REFENT");
-
-                RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(
-                        new PlayCardAction(defend, null)
-                        );
-            }
-        }
+        // Request the first agent decision after observing the turn.
+        RequestAgentAction(state, player);
     }
 
     // Temporary decision policy.
     // Eventually will ask the Python RL agent what to do. 
+    private static void RequestAgentAction(
+            CombatState state,
+            Player player
+            )
+    {
+        if (!AutoPlayTestEnabled || _agentActionPending || _autoPlayTestCount >= 2)
+            return;
+
+        var combat = player.PlayerCombatState;
+        if (combat == null)
+            return;
+
+        var observation = CombatObservationExtractor.Extract(state, player);
+        var legalActions = CombatLegalActionGenerator.Generate(observation);
+
+        // Choose the first available card action,
+        // regardless of ID
+        var selectedAction = legalActions.FirstOrDefault(action => 
+                action.Type == "PlayCard"
+                );
+
+        if (selectedAction == null)
+            return;
+
+        // Mark the agent as busy before submitting the action.
+        _agentActionPending = true;
+        _pendingAgentAction = selectedAction;
+
+        bool submitted = CombatActionDispatcher.TryExecute(
+                state,
+                player,
+                selectedAction
+                );
+
+        if (!submitted)
+        {
+            _agentActionPending = false;
+            _pendingAgentAction = null;
+            Logger.Info("AGENT TEST: Action submission rejected.");
+            return;
+        }
+
+        _autoPlayTestCount++;
+
+        Logger.Info(
+                $"AGENT TEST: Submitted {selectedAction.CardId}, " +
+                $"HandIndex {selectedAction.HandIndex}, " +
+                $"Target {selectedAction.TargetId}"
+                );
+    }
 
     // Called after each GameAction executes.
     // TRacks played cards and detecs when the player requests to end 
@@ -514,6 +696,14 @@ public partial class MainFile : Node
             }
 
             // Capture the combat identity before starting asynchronous work.
+            if (_observationTaskPending)
+            {
+                Logger.Info("Post-action observation already scheduled.");
+                return;
+            }
+
+            _observationTaskPending = true;
+
             var combatId = CombatManager.Instance.CurrentCombatId;
             _ = LogAfterExecutorFinishes(combatId);
         }
@@ -524,101 +714,332 @@ public partial class MainFile : Node
         // Wait for the action executor to finish its current processing.
         // This is asynchronous and does not necessarily mean even combat
         // lifecycle event or delayed effect has completed.
-        await RunManager.Instance.ActionExecutor.FinishedExecutingActions();
-
-        // The callback may resume after its original combat has ended
-        // Never allow it to observe or modify a different combat
-        if (!CombatManager.Instance.IsCurrentLiveCombat(combatId))
+        try
         {
-            Logger.Info("Skipping stale post-action callback.");
-            return;
-        }
+            await RunManager.Instance.ActionExecutor.FinishedExecutingActions();
 
-        Logger.Info(
-                $"Executor finished! " + 
-                $"Running: {RunManager.Instance.ActionExecutor.IsRunning}, " +
-                $"Queue Empty: {RunManager.Instance.ActionQueueSet.IsEmpty}"
-                );
-
-        // Avoid extracting an ordinary player decision state after combat ends
-        // or when the game is no longer in the player's phase
-        if (!CombatManager.Instance.IsInProgress)
-            return;
-
-        var state = _currentCombatState;
-        if (state == null || state.CurrentSide != CombatSide.Player)
-            return;
-
-        var observation = CombatObservationExtractor.Extract(
-                state,
-                state.Players[0]
-                );
-
-        if (_lastObservation != null && _batchCardActions.Count > 0)
-        {
-            // Construct a structured transition from the previous observation,
-            // all completed cards in this batch, and the resulting observation
-            // For now, this is a batch and not one decision though. 
-            _lastTransition = new CombatTransition
+            // The callback may resume after its original combat has ended
+            // Never allow it to observe or modify a different combat
+            if (!CombatManager.Instance.IsCurrentLiveCombat(combatId))
             {
-                Before = _lastObservation,
-                After = observation,
-                EndedTurn = false,
-                Actions = _batchCardActions.Select(card => new CombatActionObservation
-                        {
-                        Type = "PlayCard",
-                        CardId = card.CardModelId.Entry,
-                        TargetId = card.TargetId
-                        }).ToList()
-            };
+                Logger.Info("Skipping stale post-action callback.");
+                return;
+            }
 
             Logger.Info(
-                    $"STRUCTURED TRANSITION CREATED: " +
-                    $"{_lastTransition.Actions.Count} actions, " +
-                    $"Turn {_lastTransition.Before.Turn} -> {_lastTransition.After.Turn}"
-                    );
-            string actions = string.Join(", ",
-                    _batchCardActions.Select(card =>
-                        $"{card.CardModelId.Entry} -> Target {card.TargetId?.ToString() ?? "None"}"
-                        )
+                    $"Executor finished! " + 
+                    $"Running: {RunManager.Instance.ActionExecutor.IsRunning}, " +
+                    $"Queue Empty: {RunManager.Instance.ActionQueueSet.IsEmpty}"
                     );
 
-            Logger.Info(
-                    $"BATCH TRANSITION: Actions [{actions}], " +
-                    $"Energy {_lastObservation.Player.Energy} -> {observation.Player.Energy}, " +
-                    $"Hand {_lastObservation.Hand.Count} -> {observation.Hand.Count}"
+            // Avoid extracting an ordinary player decision state after combat ends
+            // or when the game is no longer in the player's phase
+            if (!CombatManager.Instance.IsInProgress)
+                return;
+
+            var state = _currentCombatState;
+            if (state == null || state.CurrentSide != CombatSide.Player)
+                return;
+
+            var observation = CombatObservationExtractor.Extract(
+                    state,
+                    state.Players[0]
                     );
+
+            if (_lastObservation != null && _batchCardActions.Count > 0)
+            {
+                // Detect when a pending agent decision produced
+                // more than one recorded card action.
+                if (_pendingAgentAction?.Type == "PlayCard" && 
+                        _batchCardActions.Count != 1)
+                {
+                    Logger.Info(
+                            $"WARNING: Agent submitted one card, but " +
+                            $"{_batchCardActions.Count} card actions were collected!"
+                            );
+                }
+                // Only associate an agent-selected hand index with a
+                // single matching completed card action.
+                int? agentHandIndex = null;
+                bool isAgentAction = false;
+
+                if (_batchCardActions.Count == 1 &&
+                        _pendingAgentAction?.Type == "PlayCard" &&
+                        _batchCardActions[0].CardModelId.Entry == _pendingAgentAction.CardId &&
+                        _batchCardActions[0].TargetId == _pendingAgentAction.TargetId)
+                {
+                    agentHandIndex = _pendingAgentAction.HandIndex;
+                    isAgentAction = true;
+                }
+                // Construct a structured transition from the previous observation,
+                // all completed cards in this batch, and the resulting observation
+                // For now, this is a batch and not one decision though. 
+                _lastTransition = new CombatTransition
+                {
+                    Before = _lastObservation,
+                    After = observation,
+                    EndedTurn = false,
+                    IsAgentAction = isAgentAction,
+                    Actions = _batchCardActions.Select(card => new CombatActionObservation
+                            {
+                            Type = "PlayCard",
+                            CardId = card.CardModelId.Entry,
+                            TargetId = card.TargetId,
+                            HandIndex = agentHandIndex
+                            }).ToList()
+                };
+
+                CombatExperienceBuffer.Add(_lastTransition);
+
+                Logger.Info(
+                        $"EXPERIENCE COLLECTED: " +
+                        $"Total {CombatExperienceBuffer.Count}"
+                        );
+
+                Logger.Info(
+                        $"STRUCTURED TRANSITION CREATED: " +
+                        $"{_lastTransition.Actions.Count} actions, " +
+                        $"Turn {_lastTransition.Before.Turn} -> {_lastTransition.After.Turn}"
+                        );
+                string actions = string.Join(", ",
+                        _batchCardActions.Select(card =>
+                            $"{card.CardModelId.Entry} -> Target {card.TargetId?.ToString() ?? "None"}"
+                            )
+                        );
+
+                Logger.Info(
+                        $"BATCH TRANSITION: Actions [{actions}], " +
+                        $"Energy {_lastObservation.Player.Energy} -> {observation.Player.Energy}, " +
+                        $"Hand {_lastObservation.Hand.Count} -> {observation.Hand.Count}"
+                        );
+            }
+
+            // Clear before collection actions for next transition. 
+            _batchCardActions.Clear();
+
+            if (_lastObservation != null)
+            {
+                Logger.Info(
+                        $"TRANSITION: " +
+                        $"Before Energy {_lastObservation.Player.Energy}, " +
+                        $"After Energy {observation.Player.Energy}, " +
+                        $"Before Hand {_lastObservation.Hand.Count}, " +
+                        $"After Hand {observation.Hand.Count}"
+                        );
+            }
+
+            _lastObservation = observation;
+            _pendingAgentAction = null;
+            // The submitted action has finished and its result has been observed.
+            _agentActionPending = false;
+
+            Logger.Info(
+                    $"POST-ACTION OBSERVATION: " +
+                    $"Turn {observation.Turn}, " +
+                    $"Energy {observation.Player.Energy}, " +
+                    $"Stars {observation.Player.Stars}, " +
+                    $"Hand count {observation.Hand.Count}"
+                    );
+
+            foreach (var enemy in observation.Enemies)
+            {
+                Logger.Info(
+                        $"POST-ACTION ENEMY: ID {enemy.CombatId}, HP {enemy.Hp}"
+                        );
+            }
+
+            // Request the next decision only after observing the 
+            // completed action's results.
+            if (AutoPlayTestEnabled)
+            {
+                RequestAgentAction(state, state.Players[0]);
+            }
+
+            // Send the updated combat state to Python after a card finishes.
+            if (CombatManager.Instance.IsInProgress &&
+                    state.CurrentSide == CombatSide.Player)
+            {
+                RequestPythonDecision(observation);
+            }
         }
-
-        // Clear before collection actions for next transition. 
-        _batchCardActions.Clear();
-
-        if (_lastObservation != null)
+        finally
         {
-            Logger.Info(
-                    $"TRANSITION: " +
-                    $"Before Energy {_lastObservation.Player.Energy}, " +
-                    $"After Energy {observation.Player.Energy}, " +
-                    $"Before Hand {_lastObservation.Hand.Count}, " +
-                    $"After Hand {observation.Hand.Count}"
-                    );
+            _observationTaskPending = false;
+        } 
+    }
+
+    // Entry point for sending a decision request to Python
+    private static void RequestPythonDecision(CombatObservation observation)
+    {
+        if (_pythonRequestPending)
+        {
+            Logger.Info("PYTHON: Request already pending; skipping.");
+            return;
         }
 
-        _lastObservation = observation;
+        var legalActions = CombatLegalActionGenerator.Generate(observation);
+
+        _pythonRequestPending = true;
+
+        var decisionRequest = new CombatDecisionRequest
+        {
+            DecisionId = ++_nextDecisionId,
+            Observation = observation,
+            LegalActions = legalActions
+        };
+
+        _latestDecisionId = decisionRequest.DecisionId;
 
         Logger.Info(
-                $"POST-ACTION OBSERVATION: " +
-                $"Turn {observation.Turn}, " +
-                $"Energy {observation.Player.Energy}, " +
-                $"Stars {observation.Player.Stars}, " +
-                $"Hand count {observation.Hand.Count}"
+                $"PYTHON REQUEST: DecisionId={decisionRequest.DecisionId}, " +
+                $"LegalActions={legalActions.Count}"
                 );
+        
+        _ = TestPythonConnectionAsync(decisionRequest);
+    }
 
-        foreach (var enemy in observation.Enemies)
+    private static async System.Threading.Tasks.Task TestPythonConnectionAsync(
+            CombatDecisionRequest request)
+    {
+        try
         {
+            var response = await PythonAgentClient.RequestActionAsync(request);
+
+            if (response == null)
+            {
+                Logger.Info("PYTHON TEST: No response received.");
+                return;
+            }
+
+            if (response.DecisionId != request.DecisionId)
+            {
+                Logger.Info(
+                        $"PYTHON TEST: Decision ID mismatch. " +
+                        $"Expected {request.DecisionId}, received {response.DecisionId}");
+                return;
+            }
+            
+            if (response.ActionIndex < 0 || 
+                    response.ActionIndex >= request.LegalActions.Count)
+            {
+                Logger.Info(
+                        $"PYTHON TEST: Invalid action index {response.ActionIndex}");
+                return;
+            }
+
+            var selectedAction = request.LegalActions[response.ActionIndex];
+
             Logger.Info(
-                    $"POST-ACTION ENEMY: ID {enemy.CombatId}, HP {enemy.Hp}"
+                    $"PYTHON RESPONSE: DecisionId={response.DecisionId}, " +
+                    $"ActionIndex={response.ActionIndex}, " +
+                    $"Type={selectedAction.Type}, Card={selectedAction.CardId}"
                     );
+
+            Callable.From(() =>
+                    {
+                        try
+                        {
+                            if (response.DecisionId != _latestDecisionId)
+                            {
+                                Logger.Info(
+                                        $"PYTHON STALE RESPONSE: DecisionId={response.DecisionId}, " +
+                                        $"Latest={_latestDecisionId}"
+                                        );
+                                return;
+                            }
+                            Logger.Info(
+                                    $"PYTHON MAIN THREAD TEST: " +
+                                    $"DecisionId={response.DecisionId}, " +
+                                    $"ActionIndex={response.ActionIndex}, " +
+                                    $"Card={selectedAction.CardId}"
+                                    );
+                            if (!PythonControlEnabled)
+                                return;
+
+                            // Initial safety limit: only one Python action per combat.
+                            if (_pythonActionsSubmitted >= 1 || _agentActionPending)
+                                return;
+
+                            // Never execute against an ended or inactive combat
+                            if (!CombatManager.Instance.IsInProgress ||
+                                    _currentCombatState == null ||
+                                    _currentCombatState.CurrentSide != CombatSide.Player ||
+                                    _currentCombatState.Players.Count == 0)
+                            {
+                                Logger.Info("PYTHON: Combat is no longer actionable.");
+                                return;
+                            }
+
+                            // Recheck the legal action against the current state
+                            var state = _currentCombatState;
+                            var player = state.Players[0];
+
+                            var currentObservation = 
+                                CombatObservationExtractor.Extract(state, player);
+
+                            var currentActions =
+                                CombatLegalActionGenerator.Generate(currentObservation);
+
+                            // The legal-action list must still match the request.
+                            // This is a preliminary stale-state check.
+                            if (System.Text.Json.JsonSerializer.Serialize(currentObservation) !=
+                                    System.Text.Json.JsonSerializer.Serialize(request.Observation) ||
+                                    System.Text.Json.JsonSerializer.Serialize(currentActions) !=
+                                    System.Text.Json.JsonSerializer.Serialize(request.LegalActions))
+                            {
+                                Logger.Info("PYTHON: Combat state changed; rejecting stale action.");
+                                return;
+                            }
+
+                            // Claim the action before submitting it.
+                            _agentActionPending = true;
+                            _pendingAgentAction = selectedAction;
+
+                            bool submitted;
+
+                            try
+                            {
+                                submitted = CombatActionDispatcher.TryExecute(
+                                        state,
+                                        player,
+                                        selectedAction
+                                        );
+                            }
+                            catch (Exception ex)
+                            {
+                                _agentActionPending = false;
+                                _pendingAgentAction = null;
+                                Logger.Info($"PYTHON DISPATCH ERROR: {ex.Message}");
+                                return;
+                            }
+
+                            if (!submitted)
+                            {
+                                _agentActionPending = false;
+                                _pendingAgentAction = null;
+                                Logger.Info("PYTHON: Action submission rejected.");
+                                return;
+                            }
+
+                            _pythonActionsSubmitted++;
+
+                            Logger.Info(
+                                    $"PYTHON ACTION SUBMITTED: " +
+                                    $"DecisionId={response.DecisionId}, " +
+                                    $"Type={selectedAction.Type}, " +
+                                    $"Card={selectedAction.CardId}"
+                                    );
+                        }
+                        finally
+                        {
+                            _pythonRequestPending = false;
+                        }
+                    }).CallDeferred();
+        }
+        catch (Exception ex)
+        {
+            Logger.Info($"PYTHON TEST ERROR: {ex.Message}");
+            _pythonRequestPending = false;
         }
     }
 }
