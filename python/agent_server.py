@@ -40,9 +40,22 @@ def main():
                     for index, action in enumerate(actions):
                         print(f" [{index}] {action}", flush = True)
 
+                    playable_indices = [
+                            i for i, action in enumerate(actions)
+                            if action["Type"] == "PlayCard"
+                            ]
+
+                    if playable_indices:
+                        chosen_index = playable_indices[0]
+                    else:
+                        chosen_index = next(
+                                i for i, action in enumerate(actions)
+                                if action["Type"] == "EndTurn"
+                                )
+
                     response = {
                             "DecisionId": decision_id,
-                            "ActionIndex": 0, 
+                            "ActionIndex": chosen_index, 
                             }
 
                     conn.sendall(

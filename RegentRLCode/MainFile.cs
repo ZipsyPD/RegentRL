@@ -29,7 +29,7 @@ public partial class MainFile : Node
 
     // Enables execution of decisions received from Python.
     // Keep false until single-action safeguards are done
-    private const bool PythonControlEnabled = false;
+    private const bool PythonControlEnabled = true;
 
     // Number of cards automatically submitted in this combat.
     // Temporarily limited to two for testing sequential decisions.
@@ -128,6 +128,7 @@ public partial class MainFile : Node
         _observationTaskPending = false;
         // Python invalidation reset
         _latestDecisionId = -1;
+        _pythonRequestPending = false;
         _pythonActionsSubmitted = 0;
 
         // Subscribe to this run's ActionExecutor, which processes GameActions
@@ -908,6 +909,13 @@ public partial class MainFile : Node
             if (response == null)
             {
                 Logger.Info("PYTHON TEST: No response received.");
+                Callable.From(() =>
+                        {
+                            if (request.DecisionId == _latestDecisionId)
+                            {
+                                _pythonRequestPending = false;
+                            }
+                        }).CallDeferred();
                 return;
             }
 
@@ -916,6 +924,13 @@ public partial class MainFile : Node
                 Logger.Info(
                         $"PYTHON TEST: Decision ID mismatch. " +
                         $"Expected {request.DecisionId}, received {response.DecisionId}");
+                Callable.From(() =>
+                        {
+                            if (request.DecisionId == _latestDecisionId)
+                            {
+                                _pythonRequestPending = false;
+                            }
+                        }).CallDeferred();
                 return;
             }
             
@@ -924,6 +939,13 @@ public partial class MainFile : Node
             {
                 Logger.Info(
                         $"PYTHON TEST: Invalid action index {response.ActionIndex}");
+                Callable.From(() =>
+                        {
+                            if (request.DecisionId == _latestDecisionId)
+                            {
+                                _pythonRequestPending = false;
+                            }
+                        }).CallDeferred();
                 return;
             }
 
@@ -957,7 +979,7 @@ public partial class MainFile : Node
                                 return;
 
                             // Initial safety limit: only one Python action per combat.
-                            if (_pythonActionsSubmitted >= 1 || _agentActionPending)
+                            if (_pythonActionsSubmitted >= 50 || _agentActionPending)
                                 return;
 
                             // Never execute against an ended or inactive combat
@@ -1039,7 +1061,14 @@ public partial class MainFile : Node
         catch (Exception ex)
         {
             Logger.Info($"PYTHON TEST ERROR: {ex.Message}");
-            _pythonRequestPending = false;
+
+            Callable.From(() =>
+                    {
+                        if (request.DecisionId == _latestDecisionId)
+                        {
+                            _pythonRequestPending = false;
+                        }
+                    }).CallDeferred();
         }
     }
 }
