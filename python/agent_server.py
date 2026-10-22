@@ -38,6 +38,40 @@ def main():
                             f"selected indices {response['SelectedIndices']}",
                             flush=True
                             )
+                    elif request.get("Type") == "RewardDecision":
+                        decision_id = request["DecisionId"]
+                        actions = request["LegalActions"]
+
+                        if not actions:
+                            raise ValueError("No legal reward actions received")
+
+                        # Temporary test policy:
+                        # prefer an uncollected gold reward, otherwise
+                        # select the first non-skip action.
+                        action_index = next(
+                            (
+                                i for i, action in enumerate(actions)
+                                if action["Type"] == "SelectReward"
+                                and request["Observation"]["Rewards"][
+                                    action["RewardIndex"]
+                                ]["Type"] == "Gold"
+                            ),
+                            None
+                        )
+
+                        if action_index is None:
+                            action_index = next(
+                                (
+                                    i for i, action in enumerate(actions)
+                                    if action["Type"] == "SelectReward"
+                                ),
+                                0
+                            )
+
+                        response = {
+                            "DecisionId": decision_id,
+                            "ActionIndex": action_index
+                        }
                     else:
                         decision_id = request["DecisionId"]
                         actions = request["LegalActions"]

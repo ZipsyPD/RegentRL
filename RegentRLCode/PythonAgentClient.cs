@@ -87,4 +87,32 @@ public static class PythonAgentClient
 
         return JsonSerializer.Deserialize<CardSelectionResponse>(responseJson);
     }
+    
+    public static async Task<RewardDecisionResponse?>
+        RequestRewardDecisionAsync(RewardDecisionRequest request)
+    {
+        using var client = new TcpClient();
+
+        await client.ConnectAsync("127.0.0.1", 5050);
+
+        using NetworkStream stream = client.GetStream();
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false))
+        {
+            AutoFlush = true
+        };
+        using var reader = new StreamReader(stream);
+
+        string json = JsonSerializer.Serialize(request);
+        await writer.WriteLineAsync(json);
+
+        string? responseJson = await reader.ReadLineAsync();
+
+        if (string.IsNullOrWhiteSpace(responseJson))
+            throw new InvalidOperationException(
+                "Python returned an empty reward decision response.");
+
+        return JsonSerializer.Deserialize<RewardDecisionResponse>(
+            responseJson
+        );
+    }
 }
