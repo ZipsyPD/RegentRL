@@ -29,34 +29,44 @@ def main():
 
                     request = json.loads(line)
 
-                    decision_id = request["DecisionId"]
-                    actions = request["LegalActions"]
+                    if request.get("Type") == "CardSelection":
+                        response = handle_card_selection(request)
 
-                    print(
-                            f"Decision {decision_id}: {len(actions)} legal actions",
-                            flush = True
+                        
+                        print(
+                            f"Card selection {request['DecisionId']}: "
+                            f"selected indices {response['SelectedIndices']}",
+                            flush=True
                             )
+                    else:
+                        decision_id = request["DecisionId"]
+                        actions = request["LegalActions"]
 
-                    for index, action in enumerate(actions):
-                        print(f" [{index}] {action}", flush = True)
+                        print(
+                            f"Decision {decision_id}: {len(actions)} legal actions",
+                            flush=True
+                        )
 
-                    playable_indices = [
+                        for index, action in enumerate(actions):
+                            print(f" [{index}] {action}", flush=True)
+
+                        playable_indices = [
                             i for i, action in enumerate(actions)
                             if action["Type"] == "PlayCard"
-                            ]
+                        ]
 
-                    if playable_indices:
-                        chosen_index = playable_indices[0]
-                    else:
-                        chosen_index = next(
+                        if playable_indices:
+                            chosen_index = playable_indices[0]
+                        else:
+                            chosen_index = next(
                                 i for i, action in enumerate(actions)
                                 if action["Type"] == "EndTurn"
-                                )
+                            )
 
-                    response = {
+                        response = {
                             "DecisionId": decision_id,
-                            "ActionIndex": chosen_index, 
-                            }
+                            "ActionIndex": chosen_index,
+                        }
 
                     conn.sendall(
                             (json.dumps(response) + "\n").encode("utf-8")
@@ -69,5 +79,19 @@ def main():
 
                 finally:
                     reader.close()
+
+def handle_card_selection(request):
+    options = request["Options"]
+    min_select = request["MinSelect"]
+    max_select = request["MaxSelect"]
+
+    # Temporary policy: choose the maximum allowed number.
+    count = min(max_select, len(options))
+
+    return {
+        "DecisionId": request["DecisionId"],
+        "SelectedIndices": list(range(count)),
+    }
+
 if __name__ == "__main__":
     main()

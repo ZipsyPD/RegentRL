@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -8,6 +9,9 @@ using System.Collections.Generic;
 using Godot;
 using HarmonyLib;
 
+using MegaCrit.Sts2.Core.Commands;
+using MegaCrit.Sts2.Core.Saves;
+using MegaCrit.Sts2.Core.Settings;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.GameActions;
@@ -30,6 +34,9 @@ public partial class MainFile : Node
     // Enables execution of decisions received from Python.
     // Keep false until single-action safeguards are done
     private const bool PythonControlEnabled = true;
+
+    // Testing for instant card play
+    private const bool InstantModeTestEnabled = false;
 
     // Number of cards automatically submitted in this combat.
     // Temporarily limited to two for testing sequential decisions.
@@ -78,6 +85,8 @@ public partial class MainFile : Node
     // Limit Python to one submitted action during initial testing
     private static int _pythonActionsSubmitted = 0;
 
+    private static IDisposable? _cardSelectorScope;
+
     //------------------------------------------------------------
     // Mod Initialization
     //------------------------------------------------------------
@@ -113,6 +122,18 @@ public partial class MainFile : Node
                 $"Combat setup: {state.Encounter?.Id.Entry}"
                 );
 
+        // Instant Mode Test
+        if (InstantModeTestEnabled)
+        {
+            var prefs = SaveManager.Instance.PrefsSave;
+
+            Logger.Info($"REGENTRL SPEED BEFORE: {prefs.FastMode}");
+
+            prefs.FastMode = FastModeType.Instant;
+
+            Logger.Info($"REGENTRL SPEED AFTER: {prefs.FastMode}");
+        }
+
         // Clear state from the previous combat to avoid mixing transitions
         // across different encounters
         _batchCardActions.Clear();
@@ -122,6 +143,7 @@ public partial class MainFile : Node
         _lastTransition = null;
         _combatWasWon = false;
         CombatExperienceBuffer.Clear();
+        RegentRLCardSelector.TakePendingSelections();
         _autoPlayTestCount = 0;
         _agentActionPending = false;
         _pendingAgentAction = null;
@@ -131,6 +153,17 @@ public partial class MainFile : Node
         _pythonRequestPending = false;
         _pythonActionsSubmitted = 0;
 
+        // Install RegentRL's automated card selector during Python-controlled combat.
+        if (PythonControlEnabled)
+        {
+            _cardSelectorScope?.Dispose();
+
+            _cardSelectorScope = CardSelectCmd.UseSelector(
+                    new RegentRLCardSelector()
+                    );
+
+            Logger.Info("REGENTRL: Native card selector installed.");
+        }
         // Subscribe to this run's ActionExecutor, which processes GameActions
         // Remove the handler first to prevent duplicate subscribes
         RunManager.Instance.ActionExecutor.AfterActionExecuted -= OnActionExecuted;
@@ -206,6 +239,7 @@ public partial class MainFile : Node
                 Outcome = "Win",
                 EndedTurn = _awaitingNextTurn,
                 IsAgentAction = isAgentAction,
+                CardSelections = RegentRLCardSelector.TakePendingSelections(),
                 Actions = _batchCardActions.Select(card => new CombatActionObservation
                         {
                         Type = "PlayCard",
@@ -278,6 +312,7 @@ public partial class MainFile : Node
                         _pendingAgentAction?.Type == "EndTurn" &&
                         _batchCardActions.Count == 0,
                     EndedTurn = _awaitingNextTurn,
+                    CardSelections = RegentRLCardSelector.TakePendingSelections(),
                     Actions = _batchCardActions.Select(card => new CombatActionObservation
                             {
                             Type = "PlayCard",
@@ -341,6 +376,10 @@ public partial class MainFile : Node
         _agentActionPending = false;
         // Invalidate any python response still in flight
         _latestDecisionId = -1;
+        _cardSelectorScope?.Dispose();
+        _cardSelectorScope = null;
+
+        Logger.Info("REGENTRL: Native card selector removed.");
     }
 
     private static void OnTurnStarted(CombatState state)
@@ -358,6 +397,11 @@ public partial class MainFile : Node
         }
 
         _currentCombatState = state;
+        Logger.Info(
+                $"REGENTRL SPEED CHECK: " +
+                $"FastMode={MegaCrit.Sts2.Core.Saves.SaveManager.Instance.PrefsSave.FastMode}, " +
+                $"NonInteractive={MegaCrit.Sts2.Core.Helpers.NonInteractiveMode.IsActive}"
+               );
 
         // RegentRL currently supports single-player
         Player player = state.Players[0];
@@ -453,6 +497,7 @@ public partial class MainFile : Node
                 EndedTurn = true,
                 Terminal = false,
                 IsAgentAction = _pendingAgentAction?.Type == "EndTurn",
+                CardSelections = RegentRLCardSelector.TakePendingSelections(),
                 Actions = new List<CombatActionObservation>
                 {
                     new CombatActionObservation
@@ -781,6 +826,7 @@ public partial class MainFile : Node
                     After = observation,
                     EndedTurn = false,
                     IsAgentAction = isAgentAction,
+                    CardSelections = RegentRLCardSelector.TakePendingSelections(),
                     Actions = _batchCardActions.Select(card => new CombatActionObservation
                             {
                             Type = "PlayCard",

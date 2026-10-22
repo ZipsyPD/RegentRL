@@ -10,6 +10,9 @@ public class CombatTransition
 
     public List<CombatActionObservation> Actions { get; set; } = new();
 
+    // Card Selections made while resolving this combat action.
+    public List<CardSelectionExperience> CardSelections { get; set; } = new();
+
     // True when this transition corresponds to an agent-selected action.
     // False for manual gameplay or transitions without confirmed attribution.
     public bool IsAgentAction { get; set; }
