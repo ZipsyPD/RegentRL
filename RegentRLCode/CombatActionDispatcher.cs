@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Entities.Potions;
 
 namespace RegentRL.RegentRLCode;
 
@@ -33,6 +34,57 @@ public static class CombatActionDispatcher
             return true;
         }
 
+        // Potion
+        if (action.Type == "UsePotion")
+        {
+            if (!CombatManager.Instance.IsInProgress ||
+                state.CurrentSide != CombatSide.Player ||
+                CombatManager.Instance.PlayerActionsDisabled ||
+                !player.CanUseOrRemovePotions ||
+                !player.Creature.IsAlive ||
+                !action.PotionSlot.HasValue)
+                return false;
+
+            int slot = action.PotionSlot.Value;
+
+            if (slot < 0 || slot >= player.PotionSlots.Count)
+                return false;
+
+            var potion = player.PotionSlots[slot];
+
+            if (potion == null ||
+                potion.Id.Entry != action.PotionId ||
+                potion.IsQueued ||
+                potion.HasBeenRemovedFromState ||
+                !potion.PassesCustomUsabilityCheck ||
+                (potion.Usage != PotionUsage.CombatOnly &&
+                 potion.Usage != PotionUsage.AnyTime))
+                return false;
+
+            // Potions that target enemies must use an actual enemy.
+            // Self-targeting potions receive the player's creature.
+            var potionTarget = action.TargetId.HasValue
+                ? state.Enemies.FirstOrDefault(enemy =>
+                    enemy.CombatId == action.TargetId.Value)
+                : null;
+
+            if (action.TargetId.HasValue && potionTarget == null)
+                return false;
+
+            if (potionTarget == null &&
+                potion.IsValidTarget(player.Creature))
+            {
+                potionTarget = player.Creature;
+            }
+
+            if (!potion.IsValidTarget(potionTarget))
+                return false;
+
+            potion.EnqueueManualUse(potionTarget);
+            return true;
+        }
+
+        // Card
         if (action.Type != "PlayCard")
             return false;
 

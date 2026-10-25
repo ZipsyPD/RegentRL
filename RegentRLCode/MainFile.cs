@@ -154,16 +154,7 @@ public partial class MainFile : Node
         _pythonActionsSubmitted = 0;
 
         // Install RegentRL's automated card selector during Python-controlled combat.
-        if (PythonControlEnabled)
-        {
-            _cardSelectorScope?.Dispose();
-
-            _cardSelectorScope = CardSelectCmd.UseSelector(
-                    new RegentRLCardSelector()
-                    );
-
-            Logger.Info("REGENTRL: Native card selector installed.");
-        }
+        EnsureCardSelectorInstalled();
         // Subscribe to this run's ActionExecutor, which processes GameActions
         // Remove the handler first to prevent duplicate subscribes
         RunManager.Instance.ActionExecutor.AfterActionExecuted -= OnActionExecuted;
@@ -248,6 +239,22 @@ public partial class MainFile : Node
                         HandIndex = agentHandIndex
                         }).ToList()
             };
+
+            if (_pendingAgentAction?.Type == "UsePotion")
+            {
+                _lastTransition.Actions.Insert(
+                    0,
+                    new CombatActionObservation
+                    {
+                        Type = "UsePotion",
+                        PotionSlot = _pendingAgentAction.PotionSlot,
+                        PotionId = _pendingAgentAction.PotionId,
+                        TargetId = _pendingAgentAction.TargetId
+                    }
+                );
+
+                _lastTransition.IsAgentAction = true;
+            }
 
             CombatExperienceBuffer.Add(_lastTransition);
 
@@ -376,10 +383,10 @@ public partial class MainFile : Node
         _agentActionPending = false;
         // Invalidate any python response still in flight
         _latestDecisionId = -1;
-        _cardSelectorScope?.Dispose();
-        _cardSelectorScope = null;
 
-        Logger.Info("REGENTRL: Native card selector removed.");
+        Logger.Info(
+                "REGENTRL: Combat ended; card selector retained."
+                );
     }
 
     private static void OnTurnStarted(CombatState state)
@@ -730,7 +737,12 @@ public partial class MainFile : Node
                     );
         }
 
-        if (action is PlayCardAction)
+        if (action is UsePotionAction)
+        {
+            Logger.Info("POTION: Native UsePotionAction completed");
+        }
+
+        if (action is PlayCardAction || action is UsePotionAction)
         {
             // Delay extracting the next observation while other actions are queued.
             // This avoids duplicate observations for the multi-card batches being tested
@@ -792,7 +804,60 @@ public partial class MainFile : Node
                     state.Players[0]
                     );
 
-            if (_lastObservation != null && _batchCardActions.Count > 0)
+
+            if (_lastObservation != null &&
+                _pendingAgentAction?.Type == "UsePotion")
+            {
+                var potionAction = _pendingAgentAction;
+
+                var recordedActions = new List<CombatActionObservation>
+                {
+                    new CombatActionObservation
+                    {
+                        Type = "UsePotion",
+                        PotionSlot = potionAction.PotionSlot,
+                        PotionId = potionAction.PotionId,
+                        TargetId = potionAction.TargetId
+                    }
+                };
+
+                // Some potion effects may also cause cards to be played.
+                // Keep those actions in the same transition rather than
+                // accidentally creating two transitions for one decision.
+                recordedActions.AddRange(
+                    _batchCardActions.Select(card =>
+                        new CombatActionObservation
+                        {
+                            Type = "PlayCard",
+                            CardId = card.CardModelId.Entry,
+                            TargetId = card.TargetId
+                        })
+                );
+
+                _lastTransition = new CombatTransition
+                {
+                    Before = _lastObservation,
+                    After = observation,
+                    Actions = recordedActions,
+                    CardSelections =
+                        RegentRLCardSelector.TakePendingSelections(),
+                    IsAgentAction = true,
+                    EndedTurn = false,
+                    Terminal = false
+                };
+
+                CombatExperienceBuffer.Add(_lastTransition);
+
+                Logger.Info(
+                    $"POTION EXPERIENCE COLLECTED: " +
+                    $"{potionAction.PotionId}, " +
+                    $"Slot {potionAction.PotionSlot}, " +
+                    $"Target {potionAction.TargetId?.ToString() ?? "None"}, " +
+                    $"Total {CombatExperienceBuffer.Count}"
+                );
+            }
+
+            else if (_lastObservation != null && _batchCardActions.Count > 0)
             {
                 // Detect when a pending agent decision produced
                 // more than one recorded card action.
@@ -1116,5 +1181,23 @@ public partial class MainFile : Node
                         }
                     }).CallDeferred();
         }
+    }
+
+    
+    internal static void EnsureCardSelectorInstalled()
+    {
+        if (!PythonControlEnabled)
+            return;
+
+        // Another selector may already be active.
+        if (CardSelectCmd.Selector != null)
+            return;
+
+        _cardSelectorScope?.Dispose();
+        _cardSelectorScope = CardSelectCmd.UseSelector(
+            new RegentRLCardSelector()
+        );
+
+        Logger.Info("REGENTRL: Python card selector installed.");
     }
 }

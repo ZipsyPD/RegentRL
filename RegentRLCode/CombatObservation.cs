@@ -7,6 +7,7 @@ public class CombatObservation
     public PlayerObservation Player { get; set; } = new();
     public List<EnemyObservation> Enemies { get; set; } = new();
     public List<CardObservation> Hand { get; set; } = new();
+    public List<PotionObservation> Potions { get; set; } = new();
 }
 
 // Player stats and currently available resources
@@ -70,4 +71,16 @@ public class CardObservation
 
     // Enemies that this card can legally target
     public List<uint?> LegalEnemyTargets { get; set; } = new();
+}
+
+// Potions for combat!
+public class PotionObservation
+{
+    public int Slot { get; set; }
+    public string Id { get; set; } = "";
+    public string Usage { get; set; } = "";
+    public string TargetType { get; set; } = "";
+    public bool Usable { get; set; }
+    public bool NoTargetLegal { get; set; }
+    public List<uint> LegalEnemyTargets { get; set; } = new();
 }

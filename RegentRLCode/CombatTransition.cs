@@ -37,4 +37,8 @@ public class CombatActionObservation
     public uint? TargetId { get; set; }
 
     public int? HandIndex { get; set; }
+
+    // Potions :P
+    public int? PotionSlot { get; set; }
+    public string PotionId { get; set; } = "";
 }

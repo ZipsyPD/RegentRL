@@ -3,6 +3,7 @@ using System.Linq;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Entities.Potions;
 
 namespace RegentRL.RegentRLCode;
 
@@ -118,6 +119,53 @@ public static class CombatObservationExtractor
             observation.Hand.Add(cardObservation);
         }
 
+
+        // Observe carried potions and their legal combat targets.
+        for (int slot = 0; slot < player.PotionSlots.Count; slot++)
+        {
+            var potion = player.PotionSlots[slot];
+
+            if (potion == null)
+                continue;
+
+            bool usable =
+                player.CanUseOrRemovePotions &&
+                player.Creature.IsAlive &&
+                !potion.IsQueued &&
+                !potion.HasBeenRemovedFromState &&
+                potion.PassesCustomUsabilityCheck &&
+                (potion.Usage == PotionUsage.CombatOnly ||
+                 potion.Usage == PotionUsage.AnyTime) &&
+                !CombatManager.Instance.PlayerActionsDisabled;
+
+            var potionObservation = new PotionObservation
+            {
+                Slot = slot,
+                Id = potion.Id.Entry,
+                Usage = potion.Usage.ToString(),
+                TargetType = potion.TargetType.ToString(),
+                Usable = usable
+            };
+
+            if (usable)
+            {
+                // Self-targeting potions are represented without
+                // a target ID in the Python action protocol.
+                potionObservation.NoTargetLegal =
+                    potion.IsValidTarget(null) ||
+                    potion.IsValidTarget(player.Creature);
+
+                foreach (var enemy in state.Enemies)
+                {
+                    if (potion.IsValidTarget(enemy) && enemy.CombatId.HasValue)
+                    {
+                        potionObservation.LegalEnemyTargets.Add(enemy.CombatId.Value);
+                    }
+                }
+            }
+
+            observation.Potions.Add(potionObservation);
+        }
         return observation;
     }
 }

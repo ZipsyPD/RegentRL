@@ -40,6 +40,37 @@ public static class CombatLegalActionGenerator
             }
         }
 
+        
+        // Generate legal potion-use actions.
+        foreach (var potion in observation.Potions)
+        {
+            if (!potion.Usable)
+                continue;
+
+            if (potion.NoTargetLegal)
+            {
+                actions.Add(new CombatLegalAction
+                {
+                    Type = "UsePotion",
+                    PotionSlot = potion.Slot,
+                    PotionId = potion.Id,
+                    TargetId = null
+                });
+            }
+
+            foreach (var targetId in potion.LegalEnemyTargets)
+            {
+                actions.Add(new CombatLegalAction
+                {
+                    Type = "UsePotion",
+                    PotionSlot = potion.Slot,
+                    PotionId = potion.Id,
+                    TargetId = targetId
+                });
+            }
+        }
+
+
         // Ending the turn is always an available decision
         // in our initial player-turn action model.
         actions.Add(new CombatLegalAction

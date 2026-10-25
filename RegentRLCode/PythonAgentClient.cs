@@ -115,4 +115,32 @@ public static class PythonAgentClient
             responseJson
         );
     }
+ 
+    public static async Task<CombatDecisionResponse?> RequestNeowDecisionAsync(
+        object request)
+    {
+        using var client = new TcpClient();
+        using var timeout = new CancellationTokenSource(
+            TimeSpan.FromSeconds(5)
+        );
+
+        await client.ConnectAsync("127.0.0.1", 5050, timeout.Token);
+
+        using NetworkStream stream = client.GetStream();
+        using var writer = new StreamWriter(
+            stream, new UTF8Encoding(false), leaveOpen: true
+        );
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+
+        await writer.WriteLineAsync(JsonSerializer.Serialize(request));
+        await writer.FlushAsync();
+
+        string? responseJson = await reader.ReadLineAsync(timeout.Token);
+
+        if (string.IsNullOrWhiteSpace(responseJson))
+            throw new IOException("Empty Python Neow response");
+
+        return JsonSerializer.Deserialize<CombatDecisionResponse>(responseJson);
+    }
+
 }

@@ -13,4 +13,9 @@ public class CombatLegalAction
 
     // Null for cards that do not require a creature target.
     public uint? TargetId { get; set; }
+
+    // Potion handling
+    // Used when Type == "UsePotion".
+    public int? PotionSlot { get; set; }
+    public string PotionId { get; set; } = "";
 }
