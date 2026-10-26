@@ -69,6 +69,8 @@ public static class BundleSelectionPatch
             {
                 Type = "BundleDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 LegalActions = bundles.Select((bundle, index) => new
                 {
                     Type = "ChooseBundle",
@@ -96,6 +98,8 @@ public static class BundleSelectionPatch
             }
 
             int selectedIndex = response.ActionIndex;
+            var before = request.RunObservation;
+            string[] chosenCards = bundles[selectedIndex].Bundle.Select(card => card.Id.Entry).ToArray();
 
             Callable.From(() =>
             {
@@ -129,7 +133,10 @@ public static class BundleSelectionPatch
 
                     MainFile.Logger.Info("BUNDLE: Confirming selection");
 
+                    var tree = screen.GetTree();
                     confirm.ForceClick();
+                    NoncombatEffectVerifier.ConfirmDeckGain(tree,
+                        "BundleDecision", decisionId, before, chosenCards);
                 };
             }).CallDeferred();
         }

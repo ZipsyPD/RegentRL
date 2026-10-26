@@ -69,6 +69,8 @@ public static class CardRewardSelectionPatch
             {
                 Type = "CardRewardDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 LegalActions = cards.Select((card, i) => new
                 {
                     Type = "ChooseCard",
@@ -94,6 +96,8 @@ public static class CardRewardSelectionPatch
             }
 
             int index = response.ActionIndex;
+            var before = request.RunObservation;
+            string cardId = cards[index].CardModel.Id.Entry;
 
             // Scene interaction must happen on the Godot main thread.
             Callable.From(() =>
@@ -117,6 +121,12 @@ public static class CardRewardSelectionPatch
                     NCardHolder.SignalName.Pressed,
                     selected
                 );
+
+                // Confirm the selected card actually enters the deck.
+                // Merely pressing the native holder is NOT execution evidence.
+                NoncombatEffectVerifier.ConfirmDeckGain(
+                    screen.GetTree(), "CardRewardDecision", decisionId,
+                    before, new[] { cardId });
             }).CallDeferred();
         }
         catch (Exception ex)

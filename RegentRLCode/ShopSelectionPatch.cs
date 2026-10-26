@@ -167,6 +167,8 @@ public static class ShopSelectionPatch
             {
                 Type = "ShopDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 Gold = room.Inventory.Inventory?.Player.Gold ?? 0,
                 LegalActions = legalActions
             };

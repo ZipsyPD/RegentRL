@@ -1,5 +1,12 @@
 import json
 import socket
+import argparse
+import random
+from research.live_policy import POLICIES, choose
+from research.neural_policy import NeuralPolicy
+from research.human_policy import choose_human
+
+from run_experience_recorder import RunExperienceRecorder
 
 HOST = "127.0.0.1"
 PORT = 5050
@@ -8,6 +15,18 @@ PORT = 5050
 REST_CHOICE = "SMITH"
 
 def main():
+    parser = argparse.ArgumentParser(description='RegentRL live policy server')
+    parser.add_argument('--policy', choices=(*POLICIES, 'bc', 'human'), default='legacy',
+                        help='legacy keeps the existing handcrafted policy')
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--checkpoint', help='Trained behavior-cloning checkpoint; required for --policy bc')
+    args = parser.parse_args()
+    if args.policy == 'bc' and not args.checkpoint:
+        parser.error('--policy bc requires --checkpoint')
+    neural = NeuralPolicy(args.checkpoint) if args.policy == 'bc' else None
+    rng = random.Random(args.seed)
+    print(f'LIVE POLICY: {args.policy} (seed={args.seed})', flush=True)
+    recorder = RunExperienceRecorder()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((HOST, PORT))
@@ -31,6 +50,29 @@ def main():
                         continue
 
                     request = json.loads(line)
+                    decision_id = request.get("DecisionId")
+
+                    if request.get("Type") == "RunLifecycle":
+                        recorder.lifecycle(request)
+                        conn.sendall(b'{"Ok":true}\n')
+                        continue
+
+                    if request.get("Type") == "ActionExecution":
+                        recorder.resolve(request)
+                        conn.sendall(b'{"Ok":true}\n')
+                        continue
+
+                    run_state = request.get("RunObservation")
+                    if run_state is not None:
+                        print(
+                            "RunObservation v2: "
+                            f"HP={run_state['Hp']}/{run_state['MaxHp']} "
+                            f"Gold={run_state['Gold']} "
+                            f"Deck={len(run_state['Deck'])} "
+                            f"Relics={run_state['Relics']} "
+                            f"Potions={run_state['PotionSlots']}",
+                            flush=True,
+                        )
 
                     # Policies for different decision (ancients, cards, etc..)
                     if request.get("Type") == "NeowDecision":
@@ -272,6 +314,28 @@ def main():
                             "ActionIndex": chosen_index,
                         }
 
+                    # All policy selection happens before recording/sending.
+                    # The legacy handler above remains the compatibility fallback.
+                    if args.policy == 'human':
+                        # Tag the request stored in the trace so the trainer can
+                        # exclude bot-generated examples without guessing.
+                        if not request.get('Type'):
+                            request['Type'] = 'CombatDecision'
+                        overridden = choose_human(request)
+                        request['DemonstrationSource'] = 'HumanTerminal'
+                    else:
+                        overridden = neural.choose(request) if neural is not None and request.get('Type') != 'CardSelection' else choose(request, 'first' if args.policy == 'bc' else args.policy, rng)
+                    if overridden is not None:
+                        response = overridden
+                    selected = response.get('ActionIndex', response.get('SelectedIndices'))
+                    print(f'LIVE POLICY [{args.policy}] {request.get("Type")} '
+                          f'decision={request.get("DecisionId")} choice={selected}', flush=True)
+
+                    # Persist the decision before returning it to the game.
+                    # This is a decision trace, not yet an RL transition with
+                    # a verified post-action state or terminal reward.
+                    recorder.record(request, response)
+
                     conn.sendall(
                             (json.dumps(response) + "\n").encode("utf-8")
                             )
@@ -288,6 +352,19 @@ def handle_card_selection(request):
     options = request["Options"]
     min_select = request["MinSelect"]
     max_select = request["MaxSelect"]
+    purpose = request.get("Purpose", "Unknown")
+    source = request.get("Source", "Unknown")
+
+    print(
+        f"Selection protocol v{request.get('ProtocolVersion', 0)}; "
+        f"options: {request.get('OptionDetails', [])}",
+        flush=True
+    )
+
+    print(
+        f"Card selection: Purpose={purpose}, Source={source}",
+        flush=True
+    )
 
     if min_select < 0 or max_select < min_select:
         raise ValueError("Invalid selection bounds")

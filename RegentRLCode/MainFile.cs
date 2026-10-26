@@ -80,6 +80,9 @@ public partial class MainFile : Node
     // Stop outdated decision
     private static long _latestDecisionId = 0;
 
+    // Exact request identity for post-execution acknowledgments.
+    private static long? _pendingTraceDecisionId;
+
     private static bool _pythonRequestPending = false;
 
     // Limit Python to one submitted action during initial testing
@@ -110,6 +113,8 @@ public partial class MainFile : Node
         // Combat termination subscriptions
         CombatManager.Instance.CombatWon += OnCombatWon;
         CombatManager.Instance.CombatEnded += OnCombatEnded;
+
+        RunLifecycleBridge.Install();
     }
 
     //------------------------------------------------------------
@@ -147,6 +152,7 @@ public partial class MainFile : Node
         _autoPlayTestCount = 0;
         _agentActionPending = false;
         _pendingAgentAction = null;
+        _pendingTraceDecisionId = null;
         _observationTaskPending = false;
         // Python invalidation reset
         _latestDecisionId = -1;
@@ -278,6 +284,24 @@ public partial class MainFile : Node
                     $"HP {_lastTransition.Before.Player.Hp} -> {_lastTransition.After.Player.Hp}"
                     );
 
+            // CombatWon is the authoritative terminal result even when the normal
+            // post-executor callback is skipped because combat is no longer live.
+            // Acknowledge only a decision that can be matched to the terminal action.
+            bool winningCardOrPotion =
+                _pendingAgentAction?.Type == "UsePotion" ||
+                (_pendingAgentAction?.Type == "PlayCard" && isAgentAction);
+            bool winningEndTurn =
+                _pendingAgentAction?.Type == "EndTurn" && _awaitingNextTurn &&
+                _batchCardActions.Count == 0;
+            if (_pendingTraceDecisionId.HasValue &&
+                (winningCardOrPotion || winningEndTurn))
+            {
+                RunLifecycleBridge.SendVerifiedCombatAction(
+                    _pendingTraceDecisionId.Value, observation,
+                    terminal: true, combatOutcome: "Win");
+                _pendingTraceDecisionId = null;
+            }
+
             // The terminal transition already contains the completed card actions.
             // Do not carry them into any later transition
             _batchCardActions.Clear();
@@ -349,6 +373,18 @@ public partial class MainFile : Node
                         $"HP {_lastTransition.Before.Player.Hp} -> {_lastTransition.After.Player.Hp}"
                         );
 
+                // Defeat may occur during the enemy phase, so no next player
+                // turn will arrive. Resolve the matching EndTurn here instead.
+                if (_pendingTraceDecisionId.HasValue &&
+                    _pendingAgentAction?.Type == "EndTurn" &&
+                    _awaitingNextTurn && _batchCardActions.Count == 0)
+                {
+                    RunLifecycleBridge.SendVerifiedCombatAction(
+                        _pendingTraceDecisionId.Value, observation,
+                        terminal: true, combatOutcome: "Loss");
+                    _pendingTraceDecisionId = null;
+                }
+
                 _batchCardActions.Clear();
                 _awaitingNextTurn = false;
             }
@@ -377,6 +413,8 @@ public partial class MainFile : Node
                     );
         }
 
+        // Any unmatched action is unverified (e.g. user returned to menu).
+        _pendingTraceDecisionId = null;
         // Combat has ended, so no agent action should remain pending
         //  This also handles EndTurn decisions that resulted in defeat
         _pendingAgentAction = null;
@@ -515,6 +553,16 @@ public partial class MainFile : Node
             };
 
             CombatExperienceBuffer.Add(_lastTransition);
+
+            // Only the next player-turn snapshot proves a nonterminal EndTurn
+            // has completed. This excludes a merely submitted turn-ending action.
+            if (_pendingTraceDecisionId.HasValue &&
+                _pendingAgentAction?.Type == "EndTurn")
+            {
+                RunLifecycleBridge.SendVerifiedCombatAction(
+                    _pendingTraceDecisionId.Value, observation);
+                _pendingTraceDecisionId = null;
+            }
 
             Logger.Info(
                     $"EXPERIENCE COLLECTED: " +
@@ -940,6 +988,20 @@ public partial class MainFile : Node
                         );
             }
 
+            // Acknowledge only an action that produced a matching, observed
+            // combat transition. An interrupted/stale action stays unverified.
+            if (_pendingTraceDecisionId.HasValue &&
+                _lastTransition != null &&
+                _lastTransition.After == observation &&
+                _lastTransition.IsAgentAction &&
+                (_pendingAgentAction?.Type == "PlayCard" ||
+                 _pendingAgentAction?.Type == "UsePotion"))
+            {
+                RunLifecycleBridge.SendVerifiedCombatAction(
+                    _pendingTraceDecisionId.Value,
+                    observation);
+            }
+            _pendingTraceDecisionId = null;
             _lastObservation = observation;
             _pendingAgentAction = null;
             // The submitted action has finished and its result has been observed.
@@ -996,6 +1058,9 @@ public partial class MainFile : Node
         var decisionRequest = new CombatDecisionRequest
         {
             DecisionId = ++_nextDecisionId,
+            RunObservation = _currentCombatState != null && _currentCombatState.Players.Count > 0
+                ? RunObservationExtractor.Extract(_currentCombatState.Players[0])
+                : null,
             Observation = observation,
             LegalActions = legalActions
         };
@@ -1127,6 +1192,7 @@ public partial class MainFile : Node
                             // Claim the action before submitting it.
                             _agentActionPending = true;
                             _pendingAgentAction = selectedAction;
+                            _pendingTraceDecisionId = null;
 
                             bool submitted;
 
@@ -1155,6 +1221,7 @@ public partial class MainFile : Node
                             }
 
                             _pythonActionsSubmitted++;
+                            _pendingTraceDecisionId = response.DecisionId;
 
                             Logger.Info(
                                     $"PYTHON ACTION SUBMITTED: " +

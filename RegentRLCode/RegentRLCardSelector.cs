@@ -34,13 +34,29 @@ public class RegentRLCardSelector : ICardSelector
                 $"min={minSelect}, max={maxSelect}"
                 );
 
+        var context = CardSelectionPurposePatch.Current;
+
         var request = new CardSelectionRequest
         {
             DecisionId = CardSelectionDecisionIds.Next(),
+            RunObservation = cards.Count > 0 ? RunObservationExtractor.Extract(cards[0].Owner) : null,
+            Purpose = context.Purpose,
+            Source = context.Source,
             MinSelect = minSelect,
             MaxSelect = maxSelect,
-            Options = cards.Select(card => card.Id.Entry).ToList()
+            Options = cards.Select(card => card.Id.Entry).ToList(),
+            OptionDetails = cards.Select((card, index) => new CardSelectionOption
+            {
+                Index = index,
+                CardId = card.Id.Entry,
+                UpgradeLevel = card.CurrentUpgradeLevel
+            }).ToList()
         };
+
+        MainFile.Logger.Info(
+            $"REGENTRL SELECTOR PURPOSE: " +
+            $"Purpose={request.Purpose}, Source={request.Source}"
+        );
 
         CardSelectionResponse? response;
 
@@ -73,13 +89,15 @@ public class RegentRLCardSelector : ICardSelector
         var selected = indices.Select(i => cards[i]).ToList();
 
         _pendingSelections.Add(new CardSelectionExperience
-                {
-                    DecisionId = request.DecisionId,
-                    Options = request.Options.ToList(),
-                    MinSelect = request.MinSelect,
-                    MaxSelect = request.MaxSelect,
-                    SelectedIndices = indices.ToList()
-                });
+        {
+            DecisionId = request.DecisionId,
+            Purpose = request.Purpose,
+            Source = request.Source,
+            Options = request.Options.ToList(),
+            MinSelect = request.MinSelect,
+            MaxSelect = request.MaxSelect,
+            SelectedIndices = indices.ToList()
+        });
 
         MainFile.Logger.Info(
                 $"REGENTRL SELECTOR: Python selected {selected.Count} card(s)"

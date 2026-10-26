@@ -153,6 +153,8 @@ public static class MapSelectionPatch
             {
                 Type = "MapDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 LegalActions = points.Select((p, i) => new
                 {
                     Type = "ChooseRoom",

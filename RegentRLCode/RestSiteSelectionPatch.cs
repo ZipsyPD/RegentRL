@@ -138,6 +138,8 @@ public static class RestSiteSelectionPatch
             {
                 Type = "RestSiteDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 LegalActions = buttons.Select((b, i) => new
                 {
                     Type = "ChooseRestOption",

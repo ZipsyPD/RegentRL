@@ -193,6 +193,8 @@ public static class EventOptionPatch
             {
                 Type = "NeowDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
 
                 LegalActions = buttons.Select((b, i) => new
                 {

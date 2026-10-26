@@ -12,6 +12,8 @@ public class RewardDecisionRequest
 {
     public string Type { get; set; } = "RewardDecision";
     public long DecisionId { get; set; }
+    public int ProtocolVersion { get; set; } = 2;
+    public RunObservation? RunObservation { get; set; }
     public RewardObservation Observation { get; set; } = new();
     public List<RewardActionObservation> LegalActions { get; set; } = new();
 }
