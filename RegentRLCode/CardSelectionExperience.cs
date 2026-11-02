@@ -16,5 +16,9 @@ public class CardSelectionExperience
 
     // The indices Python actually selected.
     public List<int> SelectedIndices { get; set; } = new();
+
+    // Purpose for RL training
+    public string Purpose { get; set; } = "Unknown";
+    public string Source { get; set; } = "Unknown";
 }
 

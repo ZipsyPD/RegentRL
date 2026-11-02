@@ -9,6 +9,30 @@ namespace RegentRL.RegentRLCode;
 
 public static class CombatObservationExtractor
 {
+    // Use the monster's public model ID when available. The localized
+    // display Name is NOT a reliable cross-simulator model identity.
+    private static string PublicMonsterId(object monster)
+    {
+        try
+        {
+            object? id = null;
+            foreach (var name in new[] { "Id", "ModelId", "MonsterId" })
+            {
+                var property = monster.GetType().GetProperty(name);
+                id = property?.GetValue(monster) ??
+                    monster.GetType().GetField(name)?.GetValue(monster);
+                if (id != null) break;
+            }
+            if (id == null) return "";
+            return id.GetType().GetProperty("Entry")?.GetValue(id)?.ToString()
+                ?? id.ToString() ?? "";
+        }
+        catch (System.Exception)
+        {
+            return "";
+        }
+    }
+
     public static CombatObservation Extract(
         CombatState state,
         Player player)
@@ -49,6 +73,7 @@ public static class CombatObservationExtractor
             {
                 CombatId = enemy.CombatId,
                 Name = enemy.Name,
+                MonsterId = enemy.Monster == null ? "" : PublicMonsterId(enemy.Monster),
                 Hp = enemy.CurrentHp,
                 MaxHp = enemy.MaxHp,
                 Block = enemy.Block

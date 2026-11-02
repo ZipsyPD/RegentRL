@@ -10,3 +10,30 @@ packages/
 .editorconfig
 *.user
 Directory.Build.props
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated gameplay and training data
+python/run_traces/
+python/experiences/
+output/
+checkpoints/
+*.pt
+*.pth
+*.jsonl
+
+# Archives
+*.zip
+
+# Build artifacts
+**/bin/
+**/obj/
+.vs/
+
+# Local configuration and secrets
+.env
+.env.*

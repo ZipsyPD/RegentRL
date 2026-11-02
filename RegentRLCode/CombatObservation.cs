@@ -29,6 +29,7 @@ public class EnemyObservation
 {
     public uint? CombatId { get; set; }
     public string Name { get; set; } = "";
+    public string MonsterId { get; set; } = "";
 
     public int Hp { get; set; }
     public int MaxHp { get; set; }

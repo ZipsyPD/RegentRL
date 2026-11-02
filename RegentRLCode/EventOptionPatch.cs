@@ -27,6 +27,15 @@ public static class EventOptionPatch
     private static bool _proceedAttempted;
     private static int _generation;
 
+    public static void ResetForRun()
+    {
+        ++_generation;
+        _lastRoom = null;
+        _decisionPending = false;
+        _followUpRequested = false;
+        _proceedAttempted = false;
+    }
+
     // Don't make event decisions while another interface
     // or an active combat controls the game.
     private static bool IsBusy() =>
@@ -180,6 +189,17 @@ public static class EventOptionPatch
         }
     }
 
+    private static string GetPublicOptionDescription(object option)
+    {
+        // Prefer visible, localized text. Not every game build exposes a
+        // Description property, so this returns empty instead of inventing it.
+        var value = option.GetType().GetProperty("Description")?.GetValue(option);
+        if (value == null)
+            return "";
+        var formatted = value.GetType().GetMethod("GetFormattedText", Type.EmptyTypes);
+        return formatted?.Invoke(value, null)?.ToString() ?? value.ToString() ?? "";
+    }
+
     private static async Task RequestChoiceAsync(
         NEventRoom room,
         List<NEventOptionButton> buttons,
@@ -191,14 +211,19 @@ public static class EventOptionPatch
             // Reuse the existing Python option-choice protocol.
             var request = new
             {
-                Type = "NeowDecision",
+                Type = "EventDecision",
+                EventId = buttons.Count > 0 ? buttons[0].Event?.GetType().Name ?? "" : "",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
 
                 LegalActions = buttons.Select((b, i) => new
                 {
                     Type = "ChooseOption",
                     OptionIndex = i,
-                    Name = b.Option.Title.GetFormattedText()
+                    Name = b.Option.Title.GetFormattedText(),
+                    OptionId = b.Option.GetType().GetProperty("Id")?.GetValue(b.Option)?.ToString() ?? "",
+                    Description = GetPublicOptionDescription(b.Option)
                 }).ToArray()
             };
 

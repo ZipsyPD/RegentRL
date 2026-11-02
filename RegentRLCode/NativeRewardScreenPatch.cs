@@ -125,6 +125,7 @@ public static class NativeRewardScreenPatch
             var request = new RewardDecisionRequest
             {
                 DecisionId = CardSelectionDecisionIds.Next(),
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 Observation = RewardObservationExtractor.Extract(set),
                 LegalActions = actions
             };

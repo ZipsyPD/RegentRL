@@ -23,6 +23,15 @@ public static class RestSiteSelectionPatch
     private static long _nextDecisionId;
     private static int _generation;
 
+    public static void ResetForRun()
+    {
+        ++_generation;
+        _lastRoom = null;
+        _decisionPending = false;
+        _optionClicked = false;
+        _proceedClicked = false;
+    }
+
     [HarmonyPostfix]
     public static void Postfix(NRestSiteRoom __instance)
     {
@@ -138,6 +147,8 @@ public static class RestSiteSelectionPatch
             {
                 Type = "RestSiteDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 LegalActions = buttons.Select((b, i) => new
                 {
                     Type = "ChooseRestOption",

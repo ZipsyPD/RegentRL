@@ -22,6 +22,14 @@ public static class NeowOptionPatch
     private static bool _followUpRequested;
     private static bool _proceedAttempted;
 
+    public static void ResetForRun()
+    {
+        _lastRoom = null;
+        _decisionPending = false;
+        _followUpRequested = false;
+        _proceedAttempted = false;
+    }
+
     [HarmonyPostfix]
     public static void Postfix(NEventOptionButton __instance)
     {
@@ -149,6 +157,8 @@ public static class NeowOptionPatch
             {
                 Type = "NeowDecision",
                 DecisionId = decisionId,
+                ProtocolVersion = 2,
+                RunObservation = RunObservationExtractor.TryExtractLocal(),
                 LegalActions = buttons.Select((b, i) => new
                 {
                     Type = "ChooseOption",
@@ -171,6 +181,7 @@ public static class NeowOptionPatch
             }
 
             int index = response.ActionIndex;
+            var before = request.RunObservation;
 
             // All Godot scene interactions happen on the main thread.
             Callable.From(() =>
@@ -209,7 +220,13 @@ public static class NeowOptionPatch
                         _followUpRequested = false;
                     }
 
+                    var tree = room.GetTree();
                     selected.ForceClick();
+                    // For direct relic-granting choices, a changed relic inventory
+                    // is native evidence. Nested choices stay proposal-only.
+                    if (!isProceed && before != null)
+                        NoncombatEffectVerifier.ConfirmRelic(tree,
+                            decisionId, string.Join("|", before.Relics));
 
                     if (!isProceed)
                     {

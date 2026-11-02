@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using System.Threading;
 
@@ -10,12 +11,24 @@ namespace RegentRL.RegentRLCode;
 
 public static class PythonAgentClient
 {
+    // Adds the same logical run ID to every existing request type without
+    // changing any of the working native decision handlers.
+    private static string SerializeRequest(object request)
+    {
+        JsonNode node = JsonSerializer.SerializeToNode(request)
+            ?? throw new InvalidOperationException("Empty decision request");
+        if (node is not JsonObject obj)
+            throw new InvalidOperationException("Decision request must be an object");
+        obj["RunId"] = RunLifecycleBridge.EnsureRunId();
+        return obj.ToJsonString();
+    }
+
     public static async Task<CombatDecisionResponse?> RequestActionAsync(
         CombatDecisionRequest request)
     {
         using var client = new TcpClient();
         using var timeout = new CancellationTokenSource(
-                TimeSpan.FromSeconds(5)
+                TimeSpan.FromMinutes(3)
                 );
 
         await client.ConnectAsync("127.0.0.1", 5050, timeout.Token);
@@ -32,7 +45,7 @@ public static class PythonAgentClient
             Encoding.UTF8
         );
 
-        string requestJson = JsonSerializer.Serialize(request);
+        string requestJson = SerializeRequest(request);
 
         await writer.WriteLineAsync(requestJson);
         await writer.FlushAsync();
@@ -52,7 +65,7 @@ public static class PythonAgentClient
     {
         using var client = new TcpClient();
         using var timeout = new CancellationTokenSource(
-                TimeSpan.FromSeconds(5)
+                TimeSpan.FromMinutes(3)
                 );
 
         await client.ConnectAsync("127.0.0.1", 5050, timeout.Token);
@@ -70,7 +83,7 @@ public static class PythonAgentClient
                 Encoding.UTF8
                 );
 
-        string requestJson = JsonSerializer.Serialize(request);
+        string requestJson = SerializeRequest(request);
 
         await writer.WriteLineAsync(requestJson);
         await writer.FlushAsync();
@@ -102,7 +115,7 @@ public static class PythonAgentClient
         };
         using var reader = new StreamReader(stream);
 
-        string json = JsonSerializer.Serialize(request);
+        string json = SerializeRequest(request);
         await writer.WriteLineAsync(json);
 
         string? responseJson = await reader.ReadLineAsync();
@@ -121,7 +134,7 @@ public static class PythonAgentClient
     {
         using var client = new TcpClient();
         using var timeout = new CancellationTokenSource(
-            TimeSpan.FromSeconds(5)
+            TimeSpan.FromMinutes(3)
         );
 
         await client.ConnectAsync("127.0.0.1", 5050, timeout.Token);
@@ -132,7 +145,7 @@ public static class PythonAgentClient
         );
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        await writer.WriteLineAsync(JsonSerializer.Serialize(request));
+        await writer.WriteLineAsync(SerializeRequest(request));
         await writer.FlushAsync();
 
         string? responseJson = await reader.ReadLineAsync(timeout.Token);
