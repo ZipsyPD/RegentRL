@@ -2,6 +2,9 @@
 
 ![RegentRL PPO agent playing Slay the Spire 2](assets/gameplay.gif)
 
+*PPO agent playing Slay the Spire 2 through RegentRL's C# mod and Python inference server.*
+Keep in mind this is only 100k steps. Triple defend when kill is there is egregious I know
+
 # RegentRL
 
 **A reinforcement learning agent that trains in a headless Slay the Spire 2 simulator and plays the real game through a C# mod and Python inference server.**
