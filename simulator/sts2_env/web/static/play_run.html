@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STS2 Full Run</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #171717;
+      --panel: #252525;
+      --panel-2: #303030;
+      --line: #474747;
+      --text: #f2eee6;
+      --muted: #b6afa4;
+      --accent: #d6b461;
+      --danger: #d46363;
+      --ok: #75b77d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, select, input {
+      font: inherit;
+    }
+    button {
+      border: 1px solid var(--line);
+      background: #383838;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary {
+      background: #705b22;
+      border-color: #9b7d30;
+    }
+    select, input {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #202020;
+      color: var(--text);
+      padding: 7px 8px;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr) 300px;
+      min-height: 100vh;
+    }
+    .side, .main, .actions {
+      padding: 16px;
+    }
+    .side, .actions {
+      background: #1f1f1f;
+      border-color: var(--line);
+    }
+    .side { border-right: 1px solid var(--line); }
+    .actions { border-left: 1px solid var(--line); }
+    h1, h2, h3 {
+      margin: 0;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    h1 { font-size: 22px; }
+    h2 { font-size: 18px; margin-bottom: 12px; }
+    h3 { font-size: 14px; color: var(--muted); margin: 18px 0 8px; }
+    .meta {
+      display: grid;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #343434;
+      padding: 6px 0;
+      color: var(--muted);
+    }
+    .stat strong { color: var(--text); }
+    .new-run {
+      display: grid;
+      grid-template-columns: 1fr 90px;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .new-run button { grid-column: 1 / -1; }
+    .notice {
+      margin-top: 14px;
+      padding: 10px;
+      border: 1px solid #5b4e2a;
+      background: #292519;
+      border-radius: 6px;
+      color: #e8d49a;
+      min-height: 40px;
+    }
+    .screen {
+      min-height: calc(100vh - 32px);
+      background: radial-gradient(circle at top, #292929 0, #1b1b1b 340px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .topline {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+    .phase {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .combat-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+    }
+    .enemy-row, .card-row, .item-row, .path-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .enemy-row.dead { opacity: .55; }
+    .intent { color: var(--danger); font-weight: 700; }
+    .muted { color: var(--muted); }
+    .hand, .items, .sections, .paths {
+      display: grid;
+      gap: 8px;
+    }
+    .map {
+      display: grid;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+    .map-row {
+      display: grid;
+      grid-template-columns: var(--map-columns);
+      gap: 6px;
+      min-width: 680px;
+    }
+    .node {
+      min-height: 42px;
+      border: 1px solid #454545;
+      border-radius: 6px;
+      background: #252525;
+      padding: 6px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .node.reachable {
+      border-color: var(--accent);
+      color: var(--text);
+      background: #352f1f;
+    }
+    .node.visited {
+      border-color: var(--ok);
+      color: var(--ok);
+    }
+    button.node {
+      width: 100%;
+    }
+    .section {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #222;
+    }
+    .section h3 { margin-top: 0; }
+    .action-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .action-list button {
+      text-align: left;
+      width: 100%;
+    }
+    .inventory {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+      max-height: 38vh;
+      overflow: auto;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--muted);
+      margin: 0 6px 6px 0;
+      font-size: 13px;
+    }
+    @media (max-width: 980px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+      .side, .actions {
+        border: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .screen {
+        min-height: 420px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="side">
+      <h1>STS2 Full Run</h1>
+      <div class="meta" id="summary"></div>
+      <div class="new-run">
+        <select id="character">
+          <option>Ironclad</option>
+          <option>Silent</option>
+          <option>Defect</option>
+          <option>Necrobinder</option>
+          <option>Regent</option>
+        </select>
+        <input id="seed" inputmode="numeric" placeholder="Seed">
+        <button class="primary" id="newRun">New Run</button>
+      </div>
+      <div class="notice" id="last">Loading...</div>
+      <h3>Relics</h3>
+      <div id="relics"></div>
+    </aside>
+    <main class="main">
+      <section class="screen">
+        <div class="topline">
+          <h2 id="screenTitle">Loading</h2>
+          <div class="phase" id="phase"></div>
+        </div>
+        <div id="screen"></div>
+      </section>
+    </main>
+    <aside class="actions">
+      <h2>Actions</h2>
+      <div class="action-list" id="actions"></div>
+      <h3>Deck</h3>
+      <div class="inventory" id="deck"></div>
+      <h3>Potions</h3>
+      <div id="potions"></div>
+    </aside>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    }
+
+    async function loadState() {
+      render(await api("/api/state"));
+    }
+
+    async function newRun() {
+      const seed = $("seed").value.trim();
+      const params = new URLSearchParams({ character: $("character").value });
+      if (seed) params.set("seed", seed);
+      render(await api(`/api/new?${params}`, { method: "POST" }));
+    }
+
+    async function takeAction(index) {
+      render(await api(`/api/action?index=${index}`, { method: "POST" }));
+    }
+
+    function render(state) {
+      $("character").value = state.character;
+      $("summary").innerHTML = [
+        ["Character", state.character],
+        ["Seed", state.seed],
+        ["Act", state.act],
+        ["Floor", state.floor],
+        ["HP", state.hp],
+        ["Gold", state.gold],
+        ["Deck", state.deck_size],
+      ].map(([k, v]) => `<div class="stat"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`).join("");
+      $("last").textContent = state.last_description || (state.is_over ? (state.player_won ? "You win." : "You died.") : "Choose an action.");
+      $("phase").textContent = state.phase_label;
+      $("screenTitle").textContent = state.screen.title;
+      $("screen").innerHTML = renderScreen(state.screen);
+      $("actions").innerHTML = state.actions.map((action) => (
+        `<button data-action="${action.index}">${escapeHtml(action.label)}</button>`
+      )).join("");
+      for (const button of $("screen").querySelectorAll("button[data-action]")) {
+        button.addEventListener("click", () => takeAction(button.dataset.action));
+      }
+      for (const button of $("actions").querySelectorAll("button")) {
+        button.addEventListener("click", () => takeAction(button.dataset.action));
+      }
+      $("relics").innerHTML = state.relics.length ? state.relics.map((r) => `<span class="pill">${escapeHtml(r)}</span>`).join("") : `<span class="muted">None</span>`;
+      $("deck").innerHTML = state.inventory.deck.map((card) => `<div class="card-row">${escapeHtml(card)}</div>`).join("");
+      $("potions").innerHTML = state.inventory.potions.length ? state.inventory.potions.map((p) => `<span class="pill">${escapeHtml(p.name)}</span>`).join("") : `<span class="muted">None</span>`;
+    }
+
+    function renderScreen(screen) {
+      if (screen.type === "start") return `<div class="section">Choose a character and start a new run.</div>`;
+      if (screen.type === "combat") return renderCombat(screen);
+      if (screen.type === "map") return renderMap(screen);
+      if (screen.type === "shop") return renderShop(screen);
+      if (screen.type === "choice") return renderItems(screen.items, "items");
+      if (screen.type === "rest") return renderItems(screen.items, "items");
+      if (screen.type === "event") return renderItems(screen.items, "items");
+      if (screen.type === "reward" || screen.type === "boss_relic" || screen.type === "treasure") {
+        return renderItems(screen.items, "items");
+      }
+      return "";
+    }
+
+    function renderCombat(screen) {
+      const enemies = screen.enemies.map((enemy) => `
+        <div class="enemy-row ${enemy.alive ? "" : "dead"}">
+          <strong>[${enemy.index}] ${escapeHtml(enemy.name)}</strong>
+          <span>HP ${escapeHtml(enemy.hp)} · Block ${escapeHtml(enemy.block)}</span>
+          <span class="intent">${escapeHtml(enemy.intent)}</span>
+        </div>
+      `).join("");
+      const hand = screen.hand.map((card) => `
+        <div class="card-row">
+          <span>${card.playable ? "●" : "○"} [${card.index}] ${escapeHtml(card.name)}</span>
+          <span>${card.actions.map((action) => `<button data-action="${action.action_index}">${escapeHtml(action.target)}</button>`).join(" ") || `<span class="muted">${card.targeted ? "target" : ""}</span>`}</span>
+        </div>
+      `).join("");
+      const potions = screen.potions.map((potion) => `
+        <div class="item-row">
+          <span>[${potion.index}] ${escapeHtml(potion.name)}</span>
+          <span>${potion.actions.map((action) => `<button data-action="${action.action_index}">${escapeHtml(action.target)}</button>`).join(" ")}</span>
+        </div>
+      `).join("");
+      const endTurn = screen.end_turn_action_index === null || screen.end_turn_action_index === undefined
+        ? ""
+        : `<button data-action="${screen.end_turn_action_index}">End turn</button>`;
+      return `
+        <div class="combat-grid">
+          <div class="section"><h3>Player</h3><div>HP ${escapeHtml(screen.player.hp)} · Block ${escapeHtml(screen.player.block)} · Energy ${escapeHtml(screen.energy)}</div>${endTurn}</div>
+          <div class="section"><h3>Enemies</h3><div class="items">${enemies}</div></div>
+          <div class="section"><h3>Hand</h3><div class="hand">${hand}</div></div>
+          ${potions ? `<div class="section"><h3>Potions</h3><div class="items">${potions}</div></div>` : ""}
+          <div class="section"><h3>Piles</h3><div>Draw ${screen.piles.draw} · Discard ${screen.piles.discard} · Exhaust ${screen.piles.exhaust}</div></div>
+        </div>
+      `;
+    }
+
+    function renderMap(screen) {
+      const columns = screen.columns && screen.columns.length ? screen.columns : [0];
+      const mapColumns = `repeat(${columns.length}, minmax(82px, 1fr))`;
+      const rows = screen.rows.map((row) => {
+        const byCol = new Map(row.map((node) => [node.coord[0], node]));
+        const cells = columns.map((col) => {
+          const node = byCol.get(col);
+          if (!node) return `<div></div>`;
+          const classes = ["node", node.reachable ? "reachable" : "", node.visited ? "visited" : ""].join(" ");
+          const content = `<strong>(${node.coord[0]},${node.coord[1]})</strong><br>${escapeHtml(node.label)}`;
+          if (node.reachable) return `<button class="${classes}" data-action="${node.action_index}">${content}</button>`;
+          return `<div class="${classes}">${content}</div>`;
+        }).join("");
+        return `<div class="map-row" style="--map-columns: ${mapColumns}">${cells}</div>`;
+      }).join("");
+      const paths = screen.paths.map((path) => {
+        const next = path.next.map((node) => `(${node.coord[0]},${node.coord[1]}) ${escapeHtml(node.label)}`).join(", ");
+        return `<div class="path-row"><strong>(${path.coord[0]},${path.coord[1]}) ${escapeHtml(path.label)}</strong><span>${next}</span></div>`;
+      }).join("");
+      return `<div class="section"><h3>Current</h3>${screen.current ? `(${screen.current[0]},${screen.current[1]})` : "Start"}</div><h3>Map</h3><div class="map">${rows}</div><h3>Next Paths</h3><div class="paths">${paths}</div>`;
+    }
+
+    function renderShop(screen) {
+      return `<div class="sections">${screen.sections.map((section) => `
+        <div class="section">
+          <h3>${escapeHtml(section.title)}</h3>
+          <div class="items">${section.items.map((item) => renderItemRow(item, item.sold ? "sold" : `${item.price}g`)).join("")}</div>
+        </div>
+      `).join("")}</div>`;
+    }
+
+    function renderItems(items) {
+      return `<div class="items">${items.map((item) => {
+        if (typeof item === "string") return `<div class="item-row">${escapeHtml(item)}</div>`;
+        return renderItemRow(item, item.description || "");
+      }).join("")}</div>`;
+    }
+
+    function renderItemRow(item, detail) {
+      const content = `<span>${escapeHtml(item.name)}</span><span class="muted">${escapeHtml(detail || "")}</span>`;
+      if (item.action_index === null || item.action_index === undefined || item.sold || item.enabled === false) {
+        return `<div class="item-row">${content}</div>`;
+      }
+      return `<button class="item-row" data-action="${item.action_index}">${content}</button>`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[char]));
+    }
+
+    $("newRun").addEventListener("click", newRun);
+    loadState().catch((error) => {
+      $("last").textContent = error.message;
+    });
+  </script>
+</body>
+</html>

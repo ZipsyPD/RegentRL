@@ -39,7 +39,3 @@ local.props
 
 Directory.Build.props
 !Directory.Build.props.example
-
-/simulator/sts2_env/
-/simulator/docs/
-/simulator/pyproject.toml
