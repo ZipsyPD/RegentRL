@@ -1,3 +1,7 @@
+## Gameplay Demo
+
+![RegentRL PPO agent playing Slay the Spire 2](assets/gameplay.gif)
+
 # RegentRL
 
 **A reinforcement learning agent that trains in a headless Slay the Spire 2 simulator and plays the real game through a C# mod and Python inference server.**
