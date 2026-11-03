@@ -19,6 +19,5 @@ These results measure floor progression rather than successful game completion.
 
 ## Dependencies
 
-The scripts depend on the separate `sts2-rl-agent` headless simulator and its Python modules. They are included here to document the training and evaluation implementation, but are not standalone executables.
-
-The simulator is maintained separately; its original authorship and redistribution terms should be respected.
+The simulator is located at ..\simulator and can be installed using 
+.\.venv-training\Scripts\python.exe -m pip install -e ".\simulator[train]"

@@ -1,39 +1,38 @@
+# Git and development tools
 .godot/
-bin/
-/android/
-.git/
 .idea/
 .vs/
-publish/
-Properties/
-packages/
-.editorconfig
 *.user
-Directory.Build.props
-# Python environments and caches
+
+# Python environments and generated files
 .venv/
+.venv-training/
 venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+*.egg-info/
 
-# Generated gameplay and training data
+# Build outputs
+**/bin/
+**/obj/
+publish/
+packages/
+android/
+
+# Generated training and gameplay data
+training/output/
 python/run_traces/
 python/experiences/
 output/
 checkpoints/
 *.pt
 *.pth
+*.ckpt
 *.jsonl
 
-# Archives
+# Archives and local secrets
 *.zip
-
-# Build artifacts
-**/bin/
-**/obj/
-.vs/
-
-# Local configuration and secrets
 .env
 .env.*
+local.props
