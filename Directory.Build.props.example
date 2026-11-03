@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!-- Path to your MegaDot 4.5.1 Mono executable -->
+    <GodotPath>C:/path/to/MegaDot_v4.5.1-stable_mono_win64.exe</GodotPath>
+
+    <!-- Uncomment if Slay the Spire 2 is not detected automatically -->
+    <!-- <Sts2Path>C:/path/to/Slay the Spire 2</Sts2Path> -->
+  </PropertyGroup>
+</Project>

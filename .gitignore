@@ -36,3 +36,6 @@ checkpoints/
 .env
 .env.*
 local.props
+
+Directory.Build.props
+!Directory.Build.props.example
